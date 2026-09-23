@@ -71,17 +71,32 @@ LABELS_W = [
 ]
 
 
+def check_response(resp, method, path):
+    if not resp.ok:
+        raise requests.HTTPError(f"Erreur {resp.status_code} sur {method} {path} : {resp.text}", response=resp)
+
+
 def api(session, base_url, method, path, **kwargs):
     resp = session.request(method, f"{base_url}/api/v4{path}", **kwargs)
-    if not resp.ok:
-        print(f"Erreur {resp.status_code} sur {method} {path} : {resp.text}", file=sys.stderr)
-        resp.raise_for_status()
+    check_response(resp, method, path)
     return resp.json() if resp.text else None
+
+
+def api_all(session, base_url, path, params=None):
+    """GET paginé : suit l'en-tête X-Next-Page pour lire toutes les pages, pas seulement les 100 premiers éléments."""
+    params = {**(params or {}), "per_page": 100, "page": 1}
+    items = []
+    while params["page"]:
+        resp = session.get(f"{base_url}/api/v4{path}", params=params)
+        check_response(resp, "GET", path)
+        items.extend(resp.json())
+        params["page"] = resp.headers.get("X-Next-Page")
+    return items
 
 
 def ensure_group_labels(session, base_url, group_id):
     """Crée les labels manquants au niveau du groupe. Ne touche pas à ceux qui existent déjà."""
-    existing = api(session, base_url, "GET", f"/groups/{group_id}/labels", params={"per_page": 100})
+    existing = api_all(session, base_url, f"/groups/{group_id}/labels")
     existing_names = {label["name"] for label in existing}
 
     for title, color, description in LABELS_DPT:
@@ -101,10 +116,17 @@ def ensure_group_labels(session, base_url, group_id):
 
 def ensure_backlog_milestone(session, base_url, group_id):
     """Crée le milestone 'Backlog' au niveau du groupe s'il n'existe pas déjà."""
-    existing = api(session, base_url, "GET", f"/groups/{group_id}/milestones", params={"per_page": 100})
+    existing = api_all(session, base_url, f"/groups/{group_id}/milestones", params={"include_ancestors": True})
     if any(m["title"] == "Backlog" for m in existing):
         return
-    api(session, base_url, "POST", f"/groups/{group_id}/milestones", json={"title": "Backlog"})
+    try:
+        api(session, base_url, "POST", f"/groups/{group_id}/milestones", json={"title": "Backlog"})
+    except requests.HTTPError as err:
+        # GitLab refuse un titre déjà pris par un milestone d'un projet du groupe, invisible depuis l'API groupe.
+        if err.response.status_code == 400 and "already being used" in err.response.text:
+            print("Milestone 'Backlog' déjà utilisé par un projet du groupe : création ignorée.", file=sys.stderr)
+            return
+        raise
     print("Milestone groupe créé : Backlog")
 
 
@@ -137,7 +159,7 @@ def clear_existing_label_lists(session, base_url, project_id, board_id):
 
 
 def apply_board_template(session, base_url, project_id, group_id):
-    labels = api(session, base_url, "GET", f"/groups/{group_id}/labels", params={"per_page": 100})
+    labels = api_all(session, base_url, f"/groups/{group_id}/labels")
     label_ids = {label["name"]: label["id"] for label in labels}
 
     board_id = get_or_create_board(session, base_url, project_id)
