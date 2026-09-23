@@ -7,7 +7,8 @@ GitLab via l'API :
     ce groupe, donc créés une seule fois par groupe (le script vérifie
     ce qui existe déjà et ne recrée rien en double).
   - Le board (listes + limites WIP) est propre à chaque PROJET -> recréé
-    à chaque nouveau projet.
+    à chaque nouveau projet. Les limites WIP demandent l'offre Premium :
+    sans elle, le script avertit et crée le board sans limites.
 
 Usage :
     export GITLAB_URL="https://gitlab.com"        # ou l'URL de ton instance
@@ -190,8 +191,8 @@ def apply_board_template(session, base_url, project_id, group_id):
                   json={"label_id": label_ids[title]})
         wip_errors = set_wip_limit(session, base_url, lst["id"], wip_limit) if wip_limit else []
         if wip_errors:
-            print(f"Limite WIP {wip_limit} non appliquée sur {title} (offre Premium requise ?) : {'; '.join(wip_errors)}",
-                  file=sys.stderr)
+            print(f"Limite WIP {wip_limit} non appliquée sur {title} : les limites WIP demandent l'offre GitLab Premium "
+                  f"(réponse GitLab : {'; '.join(wip_errors)})", file=sys.stderr)
         print(f"Liste créée : {title}" + (f" (WIP {wip_limit})" if wip_limit and not wip_errors else ""))
 
     print(f"Board {board_id} configuré sur le projet {project_id}.")
