@@ -7,7 +7,8 @@ GitLab via l'API :
     ce groupe, donc créés une seule fois par groupe (le script vérifie
     ce qui existe déjà et ne recrée rien en double).
   - Le board (listes + limites WIP) est propre à chaque PROJET -> recréé
-    à chaque nouveau projet.
+    à chaque nouveau projet. Les limites WIP demandent l'offre Premium :
+    sans elle, le script avertit et crée le board sans limites.
 
 Usage :
     export GITLAB_URL="https://gitlab.com"        # ou l'URL de ton instance
@@ -71,17 +72,32 @@ LABELS_W = [
 ]
 
 
+def check_response(resp, method, path):
+    if not resp.ok:
+        raise requests.HTTPError(f"Erreur {resp.status_code} sur {method} {path} : {resp.text}", response=resp)
+
+
 def api(session, base_url, method, path, **kwargs):
     resp = session.request(method, f"{base_url}/api/v4{path}", **kwargs)
-    if not resp.ok:
-        print(f"Erreur {resp.status_code} sur {method} {path} : {resp.text}", file=sys.stderr)
-        resp.raise_for_status()
+    check_response(resp, method, path)
     return resp.json() if resp.text else None
+
+
+def api_all(session, base_url, path, params=None):
+    """GET paginé : suit l'en-tête X-Next-Page pour lire toutes les pages, pas seulement les 100 premiers éléments."""
+    params = {**(params or {}), "per_page": 100, "page": 1}
+    items = []
+    while params["page"]:
+        resp = session.get(f"{base_url}/api/v4{path}", params=params)
+        check_response(resp, "GET", path)
+        items.extend(resp.json())
+        params["page"] = resp.headers.get("X-Next-Page")
+    return items
 
 
 def ensure_group_labels(session, base_url, group_id):
     """Crée les labels manquants au niveau du groupe. Ne touche pas à ceux qui existent déjà."""
-    existing = api(session, base_url, "GET", f"/groups/{group_id}/labels", params={"per_page": 100})
+    existing = api_all(session, base_url, f"/groups/{group_id}/labels")
     existing_names = {label["name"] for label in existing}
 
     for title, color, description in LABELS_DPT:
@@ -101,10 +117,17 @@ def ensure_group_labels(session, base_url, group_id):
 
 def ensure_backlog_milestone(session, base_url, group_id):
     """Crée le milestone 'Backlog' au niveau du groupe s'il n'existe pas déjà."""
-    existing = api(session, base_url, "GET", f"/groups/{group_id}/milestones", params={"per_page": 100})
+    existing = api_all(session, base_url, f"/groups/{group_id}/milestones", params={"include_ancestors": True})
     if any(m["title"] == "Backlog" for m in existing):
         return
-    api(session, base_url, "POST", f"/groups/{group_id}/milestones", json={"title": "Backlog"})
+    try:
+        api(session, base_url, "POST", f"/groups/{group_id}/milestones", json={"title": "Backlog"})
+    except requests.HTTPError as err:
+        # GitLab refuse un titre déjà pris par un milestone d'un projet du groupe, invisible depuis l'API groupe.
+        if err.response.status_code == 400 and "already being used" in err.response.text:
+            print("Milestone 'Backlog' déjà utilisé par un projet du groupe : création ignorée.", file=sys.stderr)
+            return
+        raise
     print("Milestone groupe créé : Backlog")
 
 
@@ -130,14 +153,34 @@ def get_or_create_board(session, base_url, project_id):
 
 
 def clear_existing_label_lists(session, base_url, project_id, board_id):
-    lists = api(session, base_url, "GET", f"/projects/{project_id}/boards/{board_id}/lists")
+    # L'API ne renvoie que les listes de labels (jamais les listes Open/Closed) : tout est à supprimer.
+    lists = api_all(session, base_url, f"/projects/{project_id}/boards/{board_id}/lists")
     for lst in lists:
-        if lst["list_type"] == "label":
-            api(session, base_url, "DELETE", f"/projects/{project_id}/boards/{board_id}/lists/{lst['id']}")
+        api(session, base_url, "DELETE", f"/projects/{project_id}/boards/{board_id}/lists/{lst['id']}")
+
+
+def set_wip_limit(session, base_url, list_id, wip_limit):
+    """Pose une limite WIP via GraphQL (l'API REST ne le permet pas). Renvoie la liste des erreurs, vide si OK."""
+    query = """
+    mutation($listId: ListID!, $max: Int) {
+      boardListUpdateLimitMetrics(input: {listId: $listId, limitMetric: issue_count, maxIssueCount: $max}) {
+        errors
+      }
+    }
+    """
+    resp = session.post(f"{base_url}/api/graphql", json={
+        "query": query,
+        "variables": {"listId": f"gid://gitlab/List/{list_id}", "max": wip_limit},
+    })
+    check_response(resp, "POST", "/api/graphql")
+    body = resp.json()
+    errors = [e["message"] for e in body.get("errors") or []]
+    result = (body.get("data") or {}).get("boardListUpdateLimitMetrics") or {}
+    return errors + (result.get("errors") or [])
 
 
 def apply_board_template(session, base_url, project_id, group_id):
-    labels = api(session, base_url, "GET", f"/groups/{group_id}/labels", params={"per_page": 100})
+    labels = api_all(session, base_url, f"/groups/{group_id}/labels")
     label_ids = {label["name"]: label["id"] for label in labels}
 
     board_id = get_or_create_board(session, base_url, project_id)
@@ -146,10 +189,11 @@ def apply_board_template(session, base_url, project_id, group_id):
     for title, _color, _description, wip_limit in LABELS_W:
         lst = api(session, base_url, "POST", f"/projects/{project_id}/boards/{board_id}/lists",
                   json={"label_id": label_ids[title]})
-        if wip_limit:
-            api(session, base_url, "PUT", f"/projects/{project_id}/boards/{board_id}/lists/{lst['id']}",
-                json={"max_issue_count": wip_limit, "limit_metric": "issue_count"})
-        print(f"Liste créée : {title}" + (f" (WIP {wip_limit})" if wip_limit else ""))
+        wip_errors = set_wip_limit(session, base_url, lst["id"], wip_limit) if wip_limit else []
+        if wip_errors:
+            print(f"Limite WIP {wip_limit} non appliquée sur {title} : les limites WIP demandent l'offre GitLab Premium "
+                  f"(réponse GitLab : {'; '.join(wip_errors)})", file=sys.stderr)
+        print(f"Liste créée : {title}" + (f" (WIP {wip_limit})" if wip_limit and not wip_errors else ""))
 
     print(f"Board {board_id} configuré sur le projet {project_id}.")
 
@@ -162,6 +206,11 @@ def main():
     parser.add_argument("--sprint-start", default=None, help="Date de début du sprint (YYYY-MM-DD), requis avec --new-sprint")
     parser.add_argument("--sprint-weeks", type=int, default=2, help="Durée du sprint en semaines (défaut : 2)")
     args = parser.parse_args()
+
+    # La console Windows utilise cp1252 par défaut, incapable d'afficher les emojis des labels.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
 
     project_id = args.project_id or input("ID du projet : ").strip()
     group_id = args.group_id or input("ID du groupe (labels/milestones) : ").strip()
