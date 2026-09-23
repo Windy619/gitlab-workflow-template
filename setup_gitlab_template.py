@@ -152,10 +152,30 @@ def get_or_create_board(session, base_url, project_id):
 
 
 def clear_existing_label_lists(session, base_url, project_id, board_id):
-    lists = api(session, base_url, "GET", f"/projects/{project_id}/boards/{board_id}/lists")
+    # L'API ne renvoie que les listes de labels (jamais les listes Open/Closed) : tout est à supprimer.
+    lists = api_all(session, base_url, f"/projects/{project_id}/boards/{board_id}/lists")
     for lst in lists:
-        if lst["list_type"] == "label":
-            api(session, base_url, "DELETE", f"/projects/{project_id}/boards/{board_id}/lists/{lst['id']}")
+        api(session, base_url, "DELETE", f"/projects/{project_id}/boards/{board_id}/lists/{lst['id']}")
+
+
+def set_wip_limit(session, base_url, list_id, wip_limit):
+    """Pose une limite WIP via GraphQL (l'API REST ne le permet pas). Renvoie la liste des erreurs, vide si OK."""
+    query = """
+    mutation($listId: ListID!, $max: Int) {
+      boardListUpdateLimitMetrics(input: {listId: $listId, limitMetric: issue_count, maxIssueCount: $max}) {
+        errors
+      }
+    }
+    """
+    resp = session.post(f"{base_url}/api/graphql", json={
+        "query": query,
+        "variables": {"listId": f"gid://gitlab/List/{list_id}", "max": wip_limit},
+    })
+    check_response(resp, "POST", "/api/graphql")
+    body = resp.json()
+    errors = [e["message"] for e in body.get("errors") or []]
+    result = (body.get("data") or {}).get("boardListUpdateLimitMetrics") or {}
+    return errors + (result.get("errors") or [])
 
 
 def apply_board_template(session, base_url, project_id, group_id):
@@ -168,10 +188,11 @@ def apply_board_template(session, base_url, project_id, group_id):
     for title, _color, _description, wip_limit in LABELS_W:
         lst = api(session, base_url, "POST", f"/projects/{project_id}/boards/{board_id}/lists",
                   json={"label_id": label_ids[title]})
-        if wip_limit:
-            api(session, base_url, "PUT", f"/projects/{project_id}/boards/{board_id}/lists/{lst['id']}",
-                json={"max_issue_count": wip_limit, "limit_metric": "issue_count"})
-        print(f"Liste créée : {title}" + (f" (WIP {wip_limit})" if wip_limit else ""))
+        wip_errors = set_wip_limit(session, base_url, lst["id"], wip_limit) if wip_limit else []
+        if wip_errors:
+            print(f"Limite WIP {wip_limit} non appliquée sur {title} (offre Premium requise ?) : {'; '.join(wip_errors)}",
+                  file=sys.stderr)
+        print(f"Liste créée : {title}" + (f" (WIP {wip_limit})" if wip_limit and not wip_errors else ""))
 
     print(f"Board {board_id} configuré sur le projet {project_id}.")
 
