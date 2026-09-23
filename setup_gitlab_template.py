@@ -163,6 +163,11 @@ def main():
     parser.add_argument("--sprint-weeks", type=int, default=2, help="Durée du sprint en semaines (défaut : 2)")
     args = parser.parse_args()
 
+    # La console Windows utilise cp1252 par défaut, incapable d'afficher les emojis des labels.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+
     project_id = args.project_id or input("ID du projet : ").strip()
     group_id = args.group_id or input("ID du groupe (labels/milestones) : ").strip()
 
