@@ -131,3 +131,9 @@ Le script peut être relancé sans risque :
 ## Contribuer
 
 La stratégie de branches, le versionnement et le format des commits sont décrits dans [CONTRIBUTING.md](CONTRIBUTING.md).
+
+La CI GitLab vérifie le script à chaque push (syntaxe, analyse statique, tests sous Python 3.7 et 3.12). Pour lancer les tests en local :
+
+```bash
+python -m unittest discover -s tests -v
+```
