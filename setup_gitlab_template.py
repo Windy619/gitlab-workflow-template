@@ -124,9 +124,9 @@ def ensure_labels(session, base_url, scope):
 
 def ensure_backlog_milestone(session, base_url, scope):
     """Crée le milestone 'Backlog' sur le scope (groupe ou projet) s'il n'existe pas déjà, hérité compris."""
-    # include_ancestors vaut pour un groupe, include_parent_milestones pour un projet : GitLab ignore l'autre.
-    existing = api_all(session, base_url, f"{scope}/milestones",
-                       params={"include_ancestors": True, "include_parent_milestones": True})
+    # GitLab répond 400 si les deux paramètres sont envoyés : include_ancestors pour un groupe, include_parent_milestones pour un projet.
+    inherited = "include_ancestors" if scope.startswith("/groups/") else "include_parent_milestones"
+    existing = api_all(session, base_url, f"{scope}/milestones", params={inherited: True})
     if any(m["title"] == "Backlog" for m in existing):
         return
     try:
