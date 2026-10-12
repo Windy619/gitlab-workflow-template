@@ -21,15 +21,11 @@ Usage :
     # projet sans groupe : labels et milestone créés au niveau du projet
     python3 setup_gitlab_template.py --project-id 42
 
-    # pour créer un nouveau sprint daté sur le groupe, ou le projet sans --group-id (optionnel) :
-    python3 setup_gitlab_template.py --new-sprint "Sprint 2" --sprint-start 2026-10-07
-
 Prérequis :
     pip install -r requirements.txt
 """
 
 import argparse
-import datetime
 import os
 import sys
 from urllib.parse import quote
@@ -45,8 +41,8 @@ LABELS_DPT = [
     ("[D] 🖥️ Back", "#dc143c", "Laravel, API, base de données, logique métier"),
     ("[D] 🖼️ Front", "#ed9121", "Vue.js, Livewire, HTML/CSS, JS"),
     ("[P] 🔴 P1 · Critical", "#dc143c", "Bloquant, à traiter dans les heures qui suivent"),
-    ("[P] 🟠 P2 · High", "#ed9121", "Important, à traiter dans le sprint en cours"),
-    ("[P] 🟡 P3 · Medium", "#eee600", "Normal, planifiable au prochain sprint"),
+    ("[P] 🟠 P2 · High", "#ed9121", "Important, à traiter avant les P3 et P4"),
+    ("[P] 🟡 P3 · Medium", "#eee600", "Normal, à prendre dans l'ordre du backlog"),
     ("[P] 🟢 P4 · Low", "#009966", "Mineur, à faire si le temps le permet"),
     ("[T] ♻️ Refactor", "#ed9121", "Réécriture de code sans changement de comportement visible"),
     ("[T] ⚡ Fix Urgent", "#c21e56", "Correction urgente hors bug (config, data, env…)"),
@@ -64,7 +60,7 @@ LABELS_DPT = [
 # --- Labels [W] (colonnes du board), dans l'ordre du workflow ---
 LABELS_W = [
     ("[W] 📋 Backlog", "#6699cc", "Issue identifiée mais non planifiée", 0),
-    ("[W] 📌 To Do", "#cc338b", "Planifiée pour le sprint/itération en cours", 0),
+    ("[W] 📌 To Do", "#cc338b", "Prête à être prise, à piocher en haut de la colonne", 0),
     ("[W] ⚙️ En cours", "#dc143c", "Activement en développement", 3),
     ("[W] 🚫 Bloqué", "#808080", "En attente d'une dépendance externe (accès, retour, décision) avant de reprendre", 0),
     ("[W] 👀 En review", "#cd5b45", "MR ouverte, en attente de code review", 2),
@@ -110,16 +106,20 @@ def api_all(session, base_url, path, params=None):
 
 
 def ensure_labels(session, base_url, scope):
-    """Crée les labels manquants sur le scope (groupe ou projet). Ne touche pas à ceux qui existent déjà."""
-    existing_names = {label["name"] for label in api_all(session, base_url, f"{scope}/labels")}
+    """Crée les labels manquants sur le scope (groupe ou projet) et réaligne la description de ceux qui existent."""
+    existing = {label["name"]: label for label in api_all(session, base_url, f"{scope}/labels")}
     wanted = LABELS_DPT + [(title, color, description) for title, color, description, _wip in LABELS_W]
 
     for title, color, description in wanted:
-        if title in existing_names:
-            continue
-        api(session, base_url, "POST", f"{scope}/labels",
-            json={"name": title, "color": color, "description": description})
-        print(f"Label créé ({scope}) : {title}")
+        label = existing.get(title)
+        if not label:
+            api(session, base_url, "POST", f"{scope}/labels",
+                json={"name": title, "color": color, "description": description})
+            print(f"Label créé ({scope}) : {title}")
+        # Sur un projet, la liste inclut les labels hérités du groupe : seul le groupe peut les modifier.
+        elif label.get("description") != description and label.get("is_project_label", True):
+            api(session, base_url, "PUT", f"{scope}/labels/{label['id']}", json={"description": description})
+            print(f"Description mise à jour ({scope}) : {title}")
 
 
 def ensure_backlog_milestone(session, base_url, scope):
@@ -138,19 +138,6 @@ def ensure_backlog_milestone(session, base_url, scope):
             return
         raise
     print(f"Milestone créé ({scope}) : Backlog")
-
-
-def create_sprint_milestone(session, base_url, scope, title, start_date, weeks=2):
-    """Crée un nouveau milestone de sprint daté sur le scope (groupe ou projet)."""
-    start = datetime.date.fromisoformat(start_date)
-    due = start + datetime.timedelta(weeks=weeks)
-    api(session, base_url, "POST", f"{scope}/milestones", json={
-        "title": title,
-        "description": f"Itération de {weeks} semaines - exemple à dupliquer/renommer pour chaque nouveau sprint",
-        "start_date": start.isoformat(),
-        "due_date": due.isoformat(),
-    })
-    print(f"Milestone créé ({scope}) : {title} ({start.isoformat()} → {due.isoformat()})")
 
 
 def get_or_create_board(session, base_url, project_id):
@@ -259,9 +246,6 @@ def main():
     parser.add_argument("--project-id", default=None, help="ID du projet GitLab cible (demandé si absent)")
     parser.add_argument("--group-id", default=None,
                         help="ID du groupe qui porte les labels/milestones (si absent, créés au niveau du projet)")
-    parser.add_argument("--new-sprint", default=None, help="Titre d'un nouveau milestone de sprint à créer (optionnel)")
-    parser.add_argument("--sprint-start", default=None, help="Date de début du sprint (YYYY-MM-DD), requis avec --new-sprint")
-    parser.add_argument("--sprint-weeks", type=int, default=2, help="Durée du sprint en semaines (défaut : 2)")
     args = parser.parse_args()
 
     # La console Windows utilise cp1252 par défaut, incapable d'afficher les emojis des labels.
@@ -286,11 +270,6 @@ def main():
     ensure_protected_branches(session, base_url, project_id)
     ensure_protected_tags(session, base_url, project_id)
     apply_merge_settings(session, base_url, project_id)
-
-    if args.new_sprint:
-        if not args.sprint_start:
-            sys.exit("--sprint-start est requis avec --new-sprint")
-        create_sprint_milestone(session, base_url, scope, args.new_sprint, args.sprint_start, args.sprint_weeks)
 
 
 if __name__ == "__main__":
