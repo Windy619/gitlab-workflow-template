@@ -9,6 +9,8 @@ GitLab via l'API :
   - Le board (listes + limites WIP) est propre à chaque PROJET -> recréé
     à chaque nouveau projet. Les limites WIP demandent l'offre Premium :
     sans elle, le script avertit et crée le board sans limites.
+  - Le projet reçoit aussi ses protections : branches main/staging/develop
+    (push interdit), tags v* (Maintainers) et réglages de merge.
 
 Usage :
     export GITLAB_URL="https://gitlab.com"        # ou l'URL de ton instance
@@ -29,6 +31,7 @@ import argparse
 import datetime
 import os
 import sys
+from urllib.parse import quote
 
 import requests
 
@@ -70,6 +73,16 @@ LABELS_W = [
     ("[W] 🚢 À déployer en Production", "#009966", "Validé en staging, prêt pour la prod", 0),
     ("[W] ✅ Done", "#009966", "Déployé en production, issue clôturée", 0),
 ]
+
+
+PROTECTED_BRANCHES = ("main", "staging", "develop")
+PROTECTED_TAG = "v*"
+NO_ONE = 0
+MAINTAINER = 40
+
+
+def _access_levels(entry, key):
+    return {level["access_level"] for level in entry[key]}
 
 
 def check_response(resp, method, path):
@@ -198,6 +211,53 @@ def apply_board_template(session, base_url, project_id, group_id):
     print(f"Board {board_id} configuré sur le projet {project_id}.")
 
 
+def ensure_protected_branches(session, base_url, project_id):
+    """Protège main, staging et develop : push interdit, merge réservé aux Maintainers."""
+    path = f"/projects/{project_id}/protected_branches"
+    existing = {entry["name"]: entry for entry in api_all(session, base_url, path)}
+
+    for name in PROTECTED_BRANCHES:
+        entry = existing.get(name)
+        if entry and _access_levels(entry, "push_access_levels") == {NO_ONE} \
+                and _access_levels(entry, "merge_access_levels") == {MAINTAINER} \
+                and not entry["allow_force_push"]:
+            continue
+        # GitLab protège main par défaut avec push Maintainers : l'API ne permet de resserrer qu'en recréant.
+        if entry:
+            api(session, base_url, "DELETE", f"{path}/{quote(name, safe='')}")
+        api(session, base_url, "POST", path, json={
+            "name": name,
+            "push_access_level": NO_ONE,
+            "merge_access_level": MAINTAINER,
+            "allow_force_push": False,
+        })
+        print(f"Branche protégée : {name}")
+
+
+def ensure_protected_tags(session, base_url, project_id):
+    """Réserve la création des tags v* aux Maintainers : un tag déclenche la mise en production."""
+    path = f"/projects/{project_id}/protected_tags"
+    existing = {entry["name"]: entry for entry in api_all(session, base_url, path)}
+
+    entry = existing.get(PROTECTED_TAG)
+    if entry and _access_levels(entry, "create_access_levels") == {MAINTAINER}:
+        return
+    if entry:
+        api(session, base_url, "DELETE", f"{path}/{quote(PROTECTED_TAG, safe='')}")
+    api(session, base_url, "POST", path, json={"name": PROTECTED_TAG, "create_access_level": MAINTAINER})
+    print(f"Tag protégé : {PROTECTED_TAG}")
+
+
+def apply_merge_settings(session, base_url, project_id):
+    """Impose pipeline vert et discussions résolues avant merge, et supprime la branche source ensuite."""
+    api(session, base_url, "PUT", f"/projects/{project_id}", json={
+        "only_allow_merge_if_pipeline_succeeds": True,
+        "only_allow_merge_if_all_discussions_are_resolved": True,
+        "remove_source_branch_after_merge": True,
+    })
+    print("Réglages de merge appliqués : pipeline vert, discussions résolues, suppression de la branche source.")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--project-id", default=None, help="ID du projet GitLab cible (demandé si absent)")
@@ -226,6 +286,9 @@ def main():
     ensure_group_labels(session, base_url, group_id)
     ensure_backlog_milestone(session, base_url, group_id)
     apply_board_template(session, base_url, project_id, group_id)
+    ensure_protected_branches(session, base_url, project_id)
+    ensure_protected_tags(session, base_url, project_id)
+    apply_merge_settings(session, base_url, project_id)
 
     if args.new_sprint:
         if not args.sprint_start:
