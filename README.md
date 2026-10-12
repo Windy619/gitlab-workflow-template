@@ -42,6 +42,19 @@ Créé sur chaque **projet**, avec une colonne par label `[W]`, dans l'ordre du 
 - `Backlog`, créé au niveau du groupe.
 - Des sprints datés, créés à la demande avec `--new-sprint`.
 
+### Protections du projet
+
+Appliquées sur chaque **projet** :
+
+| Élément | Réglage |
+|---|---|
+| Branches `main`, `staging`, `develop` | Push interdit, merge réservé aux Maintainers, force push interdit |
+| Tags `v*` | Création réservée aux Maintainers (un tag déclenche la mise en production) |
+| Merge | Pipeline vert et discussions résolues exigés, branche source supprimée après merge |
+
+> [!NOTE]
+> Le script ne change pas la branche par défaut. Les approbations de MR et les CODEOWNERS demandent l'offre Premium et ne sont pas configurés.
+
 ### Templates d'issue et de merge request
 
 - [`issue_templates/Default.md`](issue_templates/Default.md)
@@ -53,7 +66,7 @@ Le script ne les déploie pas. Copiez-les dans le projet cible, dans `.gitlab/is
 
 - Python 3.7 ou plus récent
 - Un token d'accès personnel GitLab avec le scope `api`
-- Les droits de gestion des labels et milestones sur le groupe, et du board sur le projet
+- Les droits de gestion des labels et milestones sur le groupe, et du board, des branches protégées et des réglages sur le projet (rôle Maintainer)
 
 ```bash
 pip install -r requirements.txt
@@ -111,7 +124,8 @@ python setup_gitlab_template.py --project-id 42 --group-id 51 --new-sprint "Spri
 Le script peut être relancé sans risque :
 
 - les labels et le milestone `Backlog` déjà présents sont conservés, jamais recréés ;
-- les colonnes du board sont supprimées puis recréées dans l'ordre du workflow.
+- les colonnes du board sont supprimées puis recréées dans l'ordre du workflow ;
+- une protection de branche ou de tag déjà conforme est conservée, une protection plus souple est recréée au niveau attendu.
 
 ## Contribuer
 
