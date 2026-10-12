@@ -64,6 +64,8 @@ Appliquées sur chaque **projet** :
 
 Le script ne les déploie pas. Copiez-les dans le projet cible, dans `.gitlab/issue_templates/` et `.gitlab/merge_request_templates/`, pour que GitLab les propose.
 
+Ce dépôt applique lui-même ses templates : `.gitlab/` en contient une copie versionnée. Les fichiers de `issue_templates/` et `merge_request_templates/` restent la source, et toute modification s'y fait en même temps que dans `.gitlab/`.
+
 ## Prérequis
 
 - Python 3.7 ou plus récent
