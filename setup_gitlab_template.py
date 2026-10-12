@@ -6,6 +6,7 @@ GitLab via l'API :
     niveau du GROUPE -> hérités automatiquement par tous les projets de
     ce groupe, donc créés une seule fois par groupe (le script vérifie
     ce qui existe déjà et ne recrée rien en double).
+    Sans --group-id (projet hors groupe), ils sont créés au niveau du PROJET.
   - Le board (listes + limites WIP) est propre à chaque PROJET -> recréé
     à chaque nouveau projet. Les limites WIP demandent l'offre Premium :
     sans elle, le script avertit et crée le board sans limites.
@@ -17,10 +18,10 @@ Usage :
     export GITLAB_TOKEN="glpat-xxxxxxxxxxxx"       # token personnel, scope "api"
     python3 setup_gitlab_template.py --project-id 42 --group-id 51
 
-    # ou sans arguments : le script les demande de manière interactive
-    python3 setup_gitlab_template.py
+    # projet sans groupe : labels et milestone créés au niveau du projet
+    python3 setup_gitlab_template.py --project-id 42
 
-    # pour créer un nouveau sprint daté au niveau du groupe (optionnel) :
+    # pour créer un nouveau sprint daté sur le groupe, ou le projet sans --group-id (optionnel) :
     python3 setup_gitlab_template.py --new-sprint "Sprint 2" --sprint-start 2026-10-07
 
 Prérequis :
@@ -108,53 +109,48 @@ def api_all(session, base_url, path, params=None):
     return items
 
 
-def ensure_group_labels(session, base_url, group_id):
-    """Crée les labels manquants au niveau du groupe. Ne touche pas à ceux qui existent déjà."""
-    existing = api_all(session, base_url, f"/groups/{group_id}/labels")
-    existing_names = {label["name"] for label in existing}
+def ensure_labels(session, base_url, scope):
+    """Crée les labels manquants sur le scope (groupe ou projet). Ne touche pas à ceux qui existent déjà."""
+    existing_names = {label["name"] for label in api_all(session, base_url, f"{scope}/labels")}
+    wanted = LABELS_DPT + [(title, color, description) for title, color, description, _wip in LABELS_W]
 
-    for title, color, description in LABELS_DPT:
+    for title, color, description in wanted:
         if title in existing_names:
             continue
-        api(session, base_url, "POST", f"/groups/{group_id}/labels",
+        api(session, base_url, "POST", f"{scope}/labels",
             json={"name": title, "color": color, "description": description})
-        print(f"Label groupe créé : {title}")
-
-    for title, color, description, _wip in LABELS_W:
-        if title in existing_names:
-            continue
-        api(session, base_url, "POST", f"/groups/{group_id}/labels",
-            json={"name": title, "color": color, "description": description})
-        print(f"Label groupe créé : {title}")
+        print(f"Label créé ({scope}) : {title}")
 
 
-def ensure_backlog_milestone(session, base_url, group_id):
-    """Crée le milestone 'Backlog' au niveau du groupe s'il n'existe pas déjà."""
-    existing = api_all(session, base_url, f"/groups/{group_id}/milestones", params={"include_ancestors": True})
+def ensure_backlog_milestone(session, base_url, scope):
+    """Crée le milestone 'Backlog' sur le scope (groupe ou projet) s'il n'existe pas déjà, hérité compris."""
+    # include_ancestors vaut pour un groupe, include_parent_milestones pour un projet : GitLab ignore l'autre.
+    existing = api_all(session, base_url, f"{scope}/milestones",
+                       params={"include_ancestors": True, "include_parent_milestones": True})
     if any(m["title"] == "Backlog" for m in existing):
         return
     try:
-        api(session, base_url, "POST", f"/groups/{group_id}/milestones", json={"title": "Backlog"})
+        api(session, base_url, "POST", f"{scope}/milestones", json={"title": "Backlog"})
     except requests.HTTPError as err:
         # GitLab refuse un titre déjà pris par un milestone d'un projet du groupe, invisible depuis l'API groupe.
         if err.response.status_code == 400 and "already being used" in err.response.text:
             print("Milestone 'Backlog' déjà utilisé par un projet du groupe : création ignorée.", file=sys.stderr)
             return
         raise
-    print("Milestone groupe créé : Backlog")
+    print(f"Milestone créé ({scope}) : Backlog")
 
 
-def create_sprint_milestone(session, base_url, group_id, title, start_date, weeks=2):
-    """Crée un nouveau milestone de sprint daté au niveau du groupe."""
+def create_sprint_milestone(session, base_url, scope, title, start_date, weeks=2):
+    """Crée un nouveau milestone de sprint daté sur le scope (groupe ou projet)."""
     start = datetime.date.fromisoformat(start_date)
     due = start + datetime.timedelta(weeks=weeks)
-    api(session, base_url, "POST", f"/groups/{group_id}/milestones", json={
+    api(session, base_url, "POST", f"{scope}/milestones", json={
         "title": title,
         "description": f"Itération de {weeks} semaines - exemple à dupliquer/renommer pour chaque nouveau sprint",
         "start_date": start.isoformat(),
         "due_date": due.isoformat(),
     })
-    print(f"Milestone groupe créé : {title} ({start.isoformat()} → {due.isoformat()})")
+    print(f"Milestone créé ({scope}) : {title} ({start.isoformat()} → {due.isoformat()})")
 
 
 def get_or_create_board(session, base_url, project_id):
@@ -192,8 +188,8 @@ def set_wip_limit(session, base_url, list_id, wip_limit):
     return errors + (result.get("errors") or [])
 
 
-def apply_board_template(session, base_url, project_id, group_id):
-    labels = api_all(session, base_url, f"/groups/{group_id}/labels")
+def apply_board_template(session, base_url, project_id, scope):
+    labels = api_all(session, base_url, f"{scope}/labels")
     label_ids = {label["name"]: label["id"] for label in labels}
 
     board_id = get_or_create_board(session, base_url, project_id)
@@ -261,7 +257,8 @@ def apply_merge_settings(session, base_url, project_id):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--project-id", default=None, help="ID du projet GitLab cible (demandé si absent)")
-    parser.add_argument("--group-id", default=None, help="ID du groupe qui porte les labels/milestones (demandé si absent)")
+    parser.add_argument("--group-id", default=None,
+                        help="ID du groupe qui porte les labels/milestones (si absent, créés au niveau du projet)")
     parser.add_argument("--new-sprint", default=None, help="Titre d'un nouveau milestone de sprint à créer (optionnel)")
     parser.add_argument("--sprint-start", default=None, help="Date de début du sprint (YYYY-MM-DD), requis avec --new-sprint")
     parser.add_argument("--sprint-weeks", type=int, default=2, help="Durée du sprint en semaines (défaut : 2)")
@@ -273,7 +270,7 @@ def main():
             stream.reconfigure(encoding="utf-8")
 
     project_id = args.project_id or input("ID du projet : ").strip()
-    group_id = args.group_id or input("ID du groupe (labels/milestones) : ").strip()
+    scope = f"/groups/{args.group_id}" if args.group_id else f"/projects/{project_id}"
 
     base_url = os.environ.get("GITLAB_URL", "https://gitlab.com").rstrip("/")
     token = os.environ.get("GITLAB_TOKEN")
@@ -283,9 +280,9 @@ def main():
     session = requests.Session()
     session.headers.update({"PRIVATE-TOKEN": token})
 
-    ensure_group_labels(session, base_url, group_id)
-    ensure_backlog_milestone(session, base_url, group_id)
-    apply_board_template(session, base_url, project_id, group_id)
+    ensure_labels(session, base_url, scope)
+    ensure_backlog_milestone(session, base_url, scope)
+    apply_board_template(session, base_url, project_id, scope)
     ensure_protected_branches(session, base_url, project_id)
     ensure_protected_tags(session, base_url, project_id)
     apply_merge_settings(session, base_url, project_id)
@@ -293,7 +290,7 @@ def main():
     if args.new_sprint:
         if not args.sprint_start:
             sys.exit("--sprint-start est requis avec --new-sprint")
-        create_sprint_milestone(session, base_url, group_id, args.new_sprint, args.sprint_start, args.sprint_weeks)
+        create_sprint_milestone(session, base_url, scope, args.new_sprint, args.sprint_start, args.sprint_weeks)
 
 
 if __name__ == "__main__":
