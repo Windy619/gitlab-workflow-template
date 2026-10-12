@@ -8,7 +8,7 @@ Le script [`setup_gitlab_template.py`](setup_gitlab_template.py) déploie la con
 
 ### Labels
 
-Une taxonomie en quatre axes, créée au niveau du **groupe** et donc héritée par tous ses projets.
+Une taxonomie en quatre axes, créée au niveau du **groupe** et donc héritée par tous ses projets. Sans `--group-id`, elle est créée au niveau du **projet**.
 
 | Axe | Préfixe | Exemples |
 |---|---|---|
@@ -39,8 +39,23 @@ Créé sur chaque **projet**, avec une colonne par label `[W]`, dans l'ordre du 
 
 ### Milestones
 
-- `Backlog`, créé au niveau du groupe.
-- Des sprints datés, créés à la demande avec `--new-sprint`.
+- `Backlog`, créé au niveau du groupe (ou du projet sans `--group-id`).
+- Une version (`v1.2.0`) par batch livré, créée à la main sur le **projet** : une version a un rythme propre à chaque projet, contrairement au `Backlog`.
+
+Le flux est continu (Kanban, limites WIP) : il n'y a pas de sprint. Une issue sans version cible reste dans `Backlog`.
+
+### Protections du projet
+
+Appliquées sur chaque **projet** :
+
+| Élément | Réglage |
+|---|---|
+| Branches `main`, `staging`, `develop` | Push interdit, merge réservé aux Maintainers, force push interdit |
+| Tags `v*` | Création réservée aux Maintainers (un tag déclenche la mise en production) |
+| Merge | Pipeline vert et discussions résolues exigés, branche source supprimée après merge |
+
+> [!NOTE]
+> Le script ne change pas la branche par défaut. Les approbations de MR et les CODEOWNERS demandent l'offre Premium et ne sont pas configurés.
 
 ### Templates d'issue et de merge request
 
@@ -53,7 +68,7 @@ Le script ne les déploie pas. Copiez-les dans le projet cible, dans `.gitlab/is
 
 - Python 3.7 ou plus récent
 - Un token d'accès personnel GitLab avec le scope `api`
-- Les droits de gestion des labels et milestones sur le groupe, et du board sur le projet
+- Les droits de gestion des labels et milestones sur le groupe (ou sur le projet sans `--group-id`), et du board, des branches protégées et des réglages sur le projet (rôle Maintainer)
 
 ```bash
 pip install -r requirements.txt
@@ -88,30 +103,28 @@ $env:GITLAB_URL = "https://gitlab.com"
 python setup_gitlab_template.py --project-id 42 --group-id 51
 ```
 
-Sans arguments, le script demande les identifiants de manière interactive.
+Sans `--project-id`, le script demande l'identifiant du projet de manière interactive.
+
+Pour un projet hors groupe (namespace personnel), omettez `--group-id` : labels et milestone sont alors créés sur le projet.
+
+```bash
+python setup_gitlab_template.py --project-id 42
+```
 
 ### Options
 
 | Option | Description |
 |---|---|
 | `--project-id` | ID du projet qui reçoit le board |
-| `--group-id` | ID du groupe qui porte les labels et milestones |
-| `--new-sprint` | Titre d'un milestone de sprint à créer (optionnel) |
-| `--sprint-start` | Date de début du sprint au format `YYYY-MM-DD`, obligatoire avec `--new-sprint` |
-| `--sprint-weeks` | Durée du sprint en semaines (défaut : 2) |
-
-Exemple avec un nouveau sprint :
-
-```bash
-python setup_gitlab_template.py --project-id 42 --group-id 51 --new-sprint "Sprint 2" --sprint-start 2026-10-07
-```
+| `--group-id` | ID du groupe qui porte les labels et milestones (optionnel : sans lui, ils sont créés sur le projet) |
 
 ### Relancer le script
 
 Le script peut être relancé sans risque :
 
-- les labels et le milestone `Backlog` déjà présents sont conservés, jamais recréés ;
-- les colonnes du board sont supprimées puis recréées dans l'ordre du workflow.
+- les labels et le milestone `Backlog` déjà présents sont conservés, jamais recréés ; seule la description d'un label existant est réalignée sur celle du script ;
+- les colonnes du board sont supprimées puis recréées dans l'ordre du workflow ;
+- une protection de branche ou de tag déjà conforme est conservée, une protection plus souple est recréée au niveau attendu.
 
 ## Contribuer
 

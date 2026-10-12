@@ -12,6 +12,8 @@ Relates to #XX
 - [ ] refactor - réécriture sans changement de comportement (`[T] ♻️ Refactor`, `[T] 🏚️ Dette technique`)
 - [ ] perf - optimisation de performance (`[T] ⚡ Performance`)
 - [ ] improvement - amélioration d'une fonctionnalité existante (`[T] 📈 Improvement`)
+- [ ] test - ajout ou modification de tests (`[T] 🔧 Chore`)
+- [ ] docs - documentation (`[T] 🔧 Chore`)
 - [ ] chore - tâche de maintenance technique (`[T] 🔧 Chore`)
 
 ## Checklist

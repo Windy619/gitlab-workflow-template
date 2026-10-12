@@ -6,29 +6,29 @@ GitLab via l'API :
     niveau du GROUPE -> hérités automatiquement par tous les projets de
     ce groupe, donc créés une seule fois par groupe (le script vérifie
     ce qui existe déjà et ne recrée rien en double).
+    Sans --group-id (projet hors groupe), ils sont créés au niveau du PROJET.
   - Le board (listes + limites WIP) est propre à chaque PROJET -> recréé
     à chaque nouveau projet. Les limites WIP demandent l'offre Premium :
     sans elle, le script avertit et crée le board sans limites.
+  - Le projet reçoit aussi ses protections : branches main/staging/develop
+    (push interdit), tags v* (Maintainers) et réglages de merge.
 
 Usage :
     export GITLAB_URL="https://gitlab.com"        # ou l'URL de ton instance
     export GITLAB_TOKEN="glpat-xxxxxxxxxxxx"       # token personnel, scope "api"
     python3 setup_gitlab_template.py --project-id 42 --group-id 51
 
-    # ou sans arguments : le script les demande de manière interactive
-    python3 setup_gitlab_template.py
-
-    # pour créer un nouveau sprint daté au niveau du groupe (optionnel) :
-    python3 setup_gitlab_template.py --new-sprint "Sprint 2" --sprint-start 2026-10-07
+    # projet sans groupe : labels et milestone créés au niveau du projet
+    python3 setup_gitlab_template.py --project-id 42
 
 Prérequis :
     pip install -r requirements.txt
 """
 
 import argparse
-import datetime
 import os
 import sys
+from urllib.parse import quote
 
 import requests
 
@@ -41,8 +41,8 @@ LABELS_DPT = [
     ("[D] 🖥️ Back", "#dc143c", "Laravel, API, base de données, logique métier"),
     ("[D] 🖼️ Front", "#ed9121", "Vue.js, Livewire, HTML/CSS, JS"),
     ("[P] 🔴 P1 · Critical", "#dc143c", "Bloquant, à traiter dans les heures qui suivent"),
-    ("[P] 🟠 P2 · High", "#ed9121", "Important, à traiter dans le sprint en cours"),
-    ("[P] 🟡 P3 · Medium", "#eee600", "Normal, planifiable au prochain sprint"),
+    ("[P] 🟠 P2 · High", "#ed9121", "Important, à traiter avant les P3 et P4"),
+    ("[P] 🟡 P3 · Medium", "#eee600", "Normal, à prendre dans l'ordre du backlog"),
     ("[P] 🟢 P4 · Low", "#009966", "Mineur, à faire si le temps le permet"),
     ("[T] ♻️ Refactor", "#ed9121", "Réécriture de code sans changement de comportement visible"),
     ("[T] ⚡ Fix Urgent", "#c21e56", "Correction urgente hors bug (config, data, env…)"),
@@ -60,7 +60,7 @@ LABELS_DPT = [
 # --- Labels [W] (colonnes du board), dans l'ordre du workflow ---
 LABELS_W = [
     ("[W] 📋 Backlog", "#6699cc", "Issue identifiée mais non planifiée", 0),
-    ("[W] 📌 To Do", "#cc338b", "Planifiée pour le sprint/itération en cours", 0),
+    ("[W] 📌 To Do", "#cc338b", "Prête à être prise, à piocher en haut de la colonne", 0),
     ("[W] ⚙️ En cours", "#dc143c", "Activement en développement", 3),
     ("[W] 🚫 Bloqué", "#808080", "En attente d'une dépendance externe (accès, retour, décision) avant de reprendre", 0),
     ("[W] 👀 En review", "#cd5b45", "MR ouverte, en attente de code review", 2),
@@ -70,6 +70,16 @@ LABELS_W = [
     ("[W] 🚢 À déployer en Production", "#009966", "Validé en staging, prêt pour la prod", 0),
     ("[W] ✅ Done", "#009966", "Déployé en production, issue clôturée", 0),
 ]
+
+
+PROTECTED_BRANCHES = ("main", "staging", "develop")
+PROTECTED_TAG = "v*"
+NO_ONE = 0
+MAINTAINER = 40
+
+
+def _access_levels(entry, key):
+    return {level["access_level"] for level in entry[key]}
 
 
 def check_response(resp, method, path):
@@ -95,53 +105,39 @@ def api_all(session, base_url, path, params=None):
     return items
 
 
-def ensure_group_labels(session, base_url, group_id):
-    """Crée les labels manquants au niveau du groupe. Ne touche pas à ceux qui existent déjà."""
-    existing = api_all(session, base_url, f"/groups/{group_id}/labels")
-    existing_names = {label["name"] for label in existing}
+def ensure_labels(session, base_url, scope):
+    """Crée les labels manquants sur le scope (groupe ou projet) et réaligne la description de ceux qui existent."""
+    existing = {label["name"]: label for label in api_all(session, base_url, f"{scope}/labels")}
+    wanted = LABELS_DPT + [(title, color, description) for title, color, description, _wip in LABELS_W]
 
-    for title, color, description in LABELS_DPT:
-        if title in existing_names:
-            continue
-        api(session, base_url, "POST", f"/groups/{group_id}/labels",
-            json={"name": title, "color": color, "description": description})
-        print(f"Label groupe créé : {title}")
-
-    for title, color, description, _wip in LABELS_W:
-        if title in existing_names:
-            continue
-        api(session, base_url, "POST", f"/groups/{group_id}/labels",
-            json={"name": title, "color": color, "description": description})
-        print(f"Label groupe créé : {title}")
+    for title, color, description in wanted:
+        label = existing.get(title)
+        if not label:
+            api(session, base_url, "POST", f"{scope}/labels",
+                json={"name": title, "color": color, "description": description})
+            print(f"Label créé ({scope}) : {title}")
+        # Sur un projet, la liste inclut les labels hérités du groupe : seul le groupe peut les modifier.
+        elif label.get("description") != description and label.get("is_project_label", True):
+            api(session, base_url, "PUT", f"{scope}/labels/{label['id']}", json={"description": description})
+            print(f"Description mise à jour ({scope}) : {title}")
 
 
-def ensure_backlog_milestone(session, base_url, group_id):
-    """Crée le milestone 'Backlog' au niveau du groupe s'il n'existe pas déjà."""
-    existing = api_all(session, base_url, f"/groups/{group_id}/milestones", params={"include_ancestors": True})
+def ensure_backlog_milestone(session, base_url, scope):
+    """Crée le milestone 'Backlog' sur le scope (groupe ou projet) s'il n'existe pas déjà, hérité compris."""
+    # include_ancestors vaut pour un groupe, include_parent_milestones pour un projet : GitLab ignore l'autre.
+    existing = api_all(session, base_url, f"{scope}/milestones",
+                       params={"include_ancestors": True, "include_parent_milestones": True})
     if any(m["title"] == "Backlog" for m in existing):
         return
     try:
-        api(session, base_url, "POST", f"/groups/{group_id}/milestones", json={"title": "Backlog"})
+        api(session, base_url, "POST", f"{scope}/milestones", json={"title": "Backlog"})
     except requests.HTTPError as err:
         # GitLab refuse un titre déjà pris par un milestone d'un projet du groupe, invisible depuis l'API groupe.
         if err.response.status_code == 400 and "already being used" in err.response.text:
             print("Milestone 'Backlog' déjà utilisé par un projet du groupe : création ignorée.", file=sys.stderr)
             return
         raise
-    print("Milestone groupe créé : Backlog")
-
-
-def create_sprint_milestone(session, base_url, group_id, title, start_date, weeks=2):
-    """Crée un nouveau milestone de sprint daté au niveau du groupe."""
-    start = datetime.date.fromisoformat(start_date)
-    due = start + datetime.timedelta(weeks=weeks)
-    api(session, base_url, "POST", f"/groups/{group_id}/milestones", json={
-        "title": title,
-        "description": f"Itération de {weeks} semaines - exemple à dupliquer/renommer pour chaque nouveau sprint",
-        "start_date": start.isoformat(),
-        "due_date": due.isoformat(),
-    })
-    print(f"Milestone groupe créé : {title} ({start.isoformat()} → {due.isoformat()})")
+    print(f"Milestone créé ({scope}) : Backlog")
 
 
 def get_or_create_board(session, base_url, project_id):
@@ -179,8 +175,8 @@ def set_wip_limit(session, base_url, list_id, wip_limit):
     return errors + (result.get("errors") or [])
 
 
-def apply_board_template(session, base_url, project_id, group_id):
-    labels = api_all(session, base_url, f"/groups/{group_id}/labels")
+def apply_board_template(session, base_url, project_id, scope):
+    labels = api_all(session, base_url, f"{scope}/labels")
     label_ids = {label["name"]: label["id"] for label in labels}
 
     board_id = get_or_create_board(session, base_url, project_id)
@@ -198,13 +194,58 @@ def apply_board_template(session, base_url, project_id, group_id):
     print(f"Board {board_id} configuré sur le projet {project_id}.")
 
 
+def ensure_protected_branches(session, base_url, project_id):
+    """Protège main, staging et develop : push interdit, merge réservé aux Maintainers."""
+    path = f"/projects/{project_id}/protected_branches"
+    existing = {entry["name"]: entry for entry in api_all(session, base_url, path)}
+
+    for name in PROTECTED_BRANCHES:
+        entry = existing.get(name)
+        if entry and _access_levels(entry, "push_access_levels") == {NO_ONE} \
+                and _access_levels(entry, "merge_access_levels") == {MAINTAINER} \
+                and not entry["allow_force_push"]:
+            continue
+        # GitLab protège main par défaut avec push Maintainers : l'API ne permet de resserrer qu'en recréant.
+        if entry:
+            api(session, base_url, "DELETE", f"{path}/{quote(name, safe='')}")
+        api(session, base_url, "POST", path, json={
+            "name": name,
+            "push_access_level": NO_ONE,
+            "merge_access_level": MAINTAINER,
+            "allow_force_push": False,
+        })
+        print(f"Branche protégée : {name}")
+
+
+def ensure_protected_tags(session, base_url, project_id):
+    """Réserve la création des tags v* aux Maintainers : un tag déclenche la mise en production."""
+    path = f"/projects/{project_id}/protected_tags"
+    existing = {entry["name"]: entry for entry in api_all(session, base_url, path)}
+
+    entry = existing.get(PROTECTED_TAG)
+    if entry and _access_levels(entry, "create_access_levels") == {MAINTAINER}:
+        return
+    if entry:
+        api(session, base_url, "DELETE", f"{path}/{quote(PROTECTED_TAG, safe='')}")
+    api(session, base_url, "POST", path, json={"name": PROTECTED_TAG, "create_access_level": MAINTAINER})
+    print(f"Tag protégé : {PROTECTED_TAG}")
+
+
+def apply_merge_settings(session, base_url, project_id):
+    """Impose pipeline vert et discussions résolues avant merge, et supprime la branche source ensuite."""
+    api(session, base_url, "PUT", f"/projects/{project_id}", json={
+        "only_allow_merge_if_pipeline_succeeds": True,
+        "only_allow_merge_if_all_discussions_are_resolved": True,
+        "remove_source_branch_after_merge": True,
+    })
+    print("Réglages de merge appliqués : pipeline vert, discussions résolues, suppression de la branche source.")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--project-id", default=None, help="ID du projet GitLab cible (demandé si absent)")
-    parser.add_argument("--group-id", default=None, help="ID du groupe qui porte les labels/milestones (demandé si absent)")
-    parser.add_argument("--new-sprint", default=None, help="Titre d'un nouveau milestone de sprint à créer (optionnel)")
-    parser.add_argument("--sprint-start", default=None, help="Date de début du sprint (YYYY-MM-DD), requis avec --new-sprint")
-    parser.add_argument("--sprint-weeks", type=int, default=2, help="Durée du sprint en semaines (défaut : 2)")
+    parser.add_argument("--group-id", default=None,
+                        help="ID du groupe qui porte les labels/milestones (si absent, créés au niveau du projet)")
     args = parser.parse_args()
 
     # La console Windows utilise cp1252 par défaut, incapable d'afficher les emojis des labels.
@@ -213,7 +254,7 @@ def main():
             stream.reconfigure(encoding="utf-8")
 
     project_id = args.project_id or input("ID du projet : ").strip()
-    group_id = args.group_id or input("ID du groupe (labels/milestones) : ").strip()
+    scope = f"/groups/{args.group_id}" if args.group_id else f"/projects/{project_id}"
 
     base_url = os.environ.get("GITLAB_URL", "https://gitlab.com").rstrip("/")
     token = os.environ.get("GITLAB_TOKEN")
@@ -223,14 +264,12 @@ def main():
     session = requests.Session()
     session.headers.update({"PRIVATE-TOKEN": token})
 
-    ensure_group_labels(session, base_url, group_id)
-    ensure_backlog_milestone(session, base_url, group_id)
-    apply_board_template(session, base_url, project_id, group_id)
-
-    if args.new_sprint:
-        if not args.sprint_start:
-            sys.exit("--sprint-start est requis avec --new-sprint")
-        create_sprint_milestone(session, base_url, group_id, args.new_sprint, args.sprint_start, args.sprint_weeks)
+    ensure_labels(session, base_url, scope)
+    ensure_backlog_milestone(session, base_url, scope)
+    apply_board_template(session, base_url, project_id, scope)
+    ensure_protected_branches(session, base_url, project_id)
+    ensure_protected_tags(session, base_url, project_id)
+    apply_merge_settings(session, base_url, project_id)
 
 
 if __name__ == "__main__":
