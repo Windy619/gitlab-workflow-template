@@ -40,7 +40,9 @@ Créé sur chaque **projet**, avec une colonne par label `[W]`, dans l'ordre du 
 ### Milestones
 
 - `Backlog`, créé au niveau du groupe (ou du projet sans `--group-id`).
-- Des sprints datés, créés à la demande avec `--new-sprint`, au même niveau.
+- Une version (`v1.2.0`) par batch livré, créée à la main sur le **projet** : une version a un rythme propre à chaque projet, contrairement au `Backlog`.
+
+Le flux est continu (Kanban, limites WIP) : il n'y a pas de sprint. Une issue sans version cible reste dans `Backlog`.
 
 ### Protections du projet
 
@@ -115,21 +117,12 @@ python setup_gitlab_template.py --project-id 42
 |---|---|
 | `--project-id` | ID du projet qui reçoit le board |
 | `--group-id` | ID du groupe qui porte les labels et milestones (optionnel : sans lui, ils sont créés sur le projet) |
-| `--new-sprint` | Titre d'un milestone de sprint à créer (optionnel) |
-| `--sprint-start` | Date de début du sprint au format `YYYY-MM-DD`, obligatoire avec `--new-sprint` |
-| `--sprint-weeks` | Durée du sprint en semaines (défaut : 2) |
-
-Exemple avec un nouveau sprint :
-
-```bash
-python setup_gitlab_template.py --project-id 42 --group-id 51 --new-sprint "Sprint 2" --sprint-start 2026-10-07
-```
 
 ### Relancer le script
 
 Le script peut être relancé sans risque :
 
-- les labels et le milestone `Backlog` déjà présents sont conservés, jamais recréés ;
+- les labels et le milestone `Backlog` déjà présents sont conservés, jamais recréés ; seule la description d'un label existant est réalignée sur celle du script ;
 - les colonnes du board sont supprimées puis recréées dans l'ordre du workflow ;
 - une protection de branche ou de tag déjà conforme est conservée, une protection plus souple est recréée au niveau attendu.
 

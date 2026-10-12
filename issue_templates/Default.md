@@ -23,4 +23,4 @@ Pistes d'implémentation, contraintes, liens vers du code existant.
 <!-- [W] Workflow · [T] Type · [D] Domaine · [P] Priorité -->
 
 ## Milestone
-<!-- Assigner à un sprint ou Backlog -->
+<!-- Version cible (ex. v1.2.0) ou Backlog -->
