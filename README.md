@@ -64,6 +64,8 @@ Appliquées sur chaque **projet** :
 
 Le script ne les déploie pas. Copiez-les dans le projet cible, dans `.gitlab/issue_templates/` et `.gitlab/merge_request_templates/`, pour que GitLab les propose.
 
+Ce dépôt applique lui-même ses templates : `.gitlab/` en contient une copie versionnée. Les fichiers de `issue_templates/` et `merge_request_templates/` restent la source, et toute modification s'y fait en même temps que dans `.gitlab/`.
+
 ## Prérequis
 
 - Python 3.7 ou plus récent
@@ -129,3 +131,9 @@ Le script peut être relancé sans risque :
 ## Contribuer
 
 La stratégie de branches, le versionnement et le format des commits sont décrits dans [CONTRIBUTING.md](CONTRIBUTING.md).
+
+La CI GitLab vérifie le script à chaque push (syntaxe, analyse statique, tests sous Python 3.7 et 3.12). Pour lancer les tests en local :
+
+```bash
+python -m unittest discover -s tests -v
+```
