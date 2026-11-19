@@ -1,0 +1,33 @@
+spec:
+  inputs:
+    node_version:
+      description: Version majeure de Node.js.
+      default: "22"
+      regex: '^[0-9]+$'
+    build_script:
+      description: Script npm de build.
+      default: build
+    artifact_path:
+      description: Dossier produit par le build, transmis aux jobs de déploiement.
+      default: public/build/
+---
+build_assets:
+  image: node:$[[ inputs.node_version ]]
+  stage: build
+  needs: []
+  variables:
+    npm_config_cache: $CI_PROJECT_DIR/.npm
+  cache:
+    key:
+      prefix: npm
+      files:
+        - package-lock.json
+    paths:
+      - .npm/
+  script:
+    - npm ci --include=dev --no-audit --no-fund --prefer-offline
+    - npm run $[[ inputs.build_script ]]
+  artifacts:
+    paths:
+      - $[[ inputs.artifact_path ]]
+    expire_in: 1 hour

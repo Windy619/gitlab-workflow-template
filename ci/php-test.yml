@@ -1,0 +1,81 @@
+spec:
+  inputs:
+    job:
+      description: Nom du job. Le changer pour inclure le template une seconde fois (autre suite, autre base).
+      default: test_phpunit
+      regex: '^test_[a-z0-9_]+$'
+    runner:
+      description: Lanceur de tests.
+      default: phpunit
+      options:
+        - phpunit
+        - pest
+    testsuite:
+      description: Suite à lancer. Vide pour toutes.
+      default: ""
+    image:
+      description: Image Debian ou Ubuntu dont les paquets fournissent php_version (ubuntu:24.04 pour 8.3, debian:trixie-slim pour 8.4).
+      default: ubuntu:24.04
+    php_version:
+      description: Version de PHP installée en paquets.
+      default: "8.3"
+      regex: '^8\.[1-9]$'
+    php_extensions:
+      description: Extensions, installées en paquets php<version>-<extension>.
+      default: mbstring xml curl zip intl
+    apt_packages:
+      description: Paquets système en plus, par exemple les binaires appelés par les tests.
+      default: ""
+    services:
+      description: Services du job, par exemple une base MySQL. Les variables DB_* restent dans le projet.
+      type: array
+      default: []
+---
+$[[ inputs.job ]]:
+  image: $[[ inputs.image ]]
+  stage: test
+  needs: []
+  services: $[[ inputs.services ]]
+  variables:
+    DEBIAN_FRONTEND: noninteractive
+    COMPOSER_CACHE_DIR: $CI_PROJECT_DIR/.composer-cache
+    PHP_VERSION: $[[ inputs.php_version ]]
+    PHP_EXTENSIONS: $[[ inputs.php_extensions ]]
+    APT_PACKAGES: $[[ inputs.apt_packages ]]
+    TEST_RUNNER: $[[ inputs.runner ]]
+    TESTSUITE: $[[ inputs.testsuite ]]
+  cache:
+    key:
+      prefix: composer
+      files:
+        - composer.lock
+    paths:
+      - .composer-cache/
+  before_script:
+    - apt-get update -qq
+    - |
+      apt-get install -y -qq --no-install-recommends ca-certificates git unzip composer \
+        "php${PHP_VERSION}-cli" $(for e in $PHP_EXTENSIONS; do printf 'php%s-%s ' "$PHP_VERSION" "$e"; done) \
+        $APT_PACKAGES >/dev/null
+    - php -v
+    - composer install --no-interaction --no-progress --prefer-dist
+    - |
+      if [ -f artisan ]; then
+        [ -f .env ] || cp .env.example .env
+        php artisan key:generate --force
+      fi
+    # Le port d'une base de service s'ouvre avant qu'elle accepte les connexions.
+    - |
+      if [ "$DB_CONNECTION" = "mysql" ]; then
+        for i in $(seq 1 30); do
+          php -r 'new PDO("mysql:host=" . getenv("DB_HOST") . ";port=" . (getenv("DB_PORT") ?: "3306"), getenv("DB_USERNAME"), getenv("DB_PASSWORD"));' 2>/dev/null && break
+          sleep 2
+        done
+      fi
+  script:
+    - vendor/bin/$TEST_RUNNER ${TESTSUITE:+--testsuite="$TESTSUITE"} --log-junit junit.xml
+  artifacts:
+    when: always
+    reports:
+      junit: junit.xml
+    expire_in: 1 week

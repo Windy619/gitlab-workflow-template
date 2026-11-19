@@ -1,0 +1,44 @@
+spec:
+  inputs:
+    php_version:
+      description: Version de PHP de l'image jakzal/phpqa.
+      default: "8.3"
+      regex: '^8\.[1-9]$'
+---
+# L'image n'a pas toutes les extensions métier : les contrôles statiques n'en chargent aucune.
+.ci_php_quality:
+  image: jakzal/phpqa:php$[[ inputs.php_version ]]
+  stage: test
+  needs: []
+  variables:
+    COMPOSER_CACHE_DIR: $CI_PROJECT_DIR/.composer-cache
+  cache:
+    key:
+      prefix: composer
+      files:
+        - composer.lock
+    paths:
+      - .composer-cache/
+  before_script:
+    - composer install --no-interaction --no-progress --prefer-dist --no-scripts --ignore-platform-req='ext-*'
+
+test_pint:
+  extends: .ci_php_quality
+  script:
+    - vendor/bin/pint --test
+
+test_phpstan:
+  extends: .ci_php_quality
+  rules:
+    - exists:
+        - phpstan.neon
+        - phpstan.neon.dist
+  script:
+    - vendor/bin/phpstan analyse --no-progress --memory-limit=1G
+
+# Lit composer.lock seul : pas besoin de vendor/.
+test_composer_audit:
+  extends: .ci_php_quality
+  before_script: []
+  script:
+    - composer audit --locked --no-interaction

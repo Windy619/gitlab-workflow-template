@@ -1,0 +1,25 @@
+stages:
+  - build
+  - test
+  - deploy
+  - rollback
+
+# Une branche de travail est couverte par le pipeline de sa MR. Les branches longues gardent
+# leur pipeline de branche même quand une MR de batch part d'elles, sinon plus de déploiement.
+workflow:
+  auto_cancel:
+    on_new_commit: interruptible
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH =~ /^(develop|staging|main)$/
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+default:
+  interruptible: true
+  # Seules les pannes d'infrastructure se relancent : un job bloqué ou trop long le resterait.
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - scheduler_failure
