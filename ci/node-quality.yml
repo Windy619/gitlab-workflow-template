@@ -1,0 +1,41 @@
+spec:
+  inputs:
+    node_version:
+      description: Version majeure de Node.js.
+      default: "22"
+      regex: '^[0-9]+$'
+    lint_script:
+      description: Script npm de lint.
+      default: lint
+    typecheck_script:
+      description: Script npm de vérification des types, lancé seulement si tsconfig.json existe.
+      default: typecheck
+---
+.ci_node_quality:
+  image: node:$[[ inputs.node_version ]]
+  stage: test
+  needs: []
+  variables:
+    npm_config_cache: $CI_PROJECT_DIR/.npm
+  cache:
+    key:
+      prefix: npm
+      files:
+        - package-lock.json
+    paths:
+      - .npm/
+  before_script:
+    - npm ci --include=dev --no-audit --no-fund --prefer-offline
+
+test_lint:
+  extends: .ci_node_quality
+  script:
+    - npm run $[[ inputs.lint_script ]]
+
+test_typecheck:
+  extends: .ci_node_quality
+  rules:
+    - exists:
+        - tsconfig.json
+  script:
+    - npm run $[[ inputs.typecheck_script ]]
