@@ -1,15 +1,14 @@
 include:
-  - remote: https://gitlab.com/windy6191/gitlab-workflow-template/-/raw/v1.2.0/ci/base.yml
-  - remote: https://gitlab.com/windy6191/gitlab-workflow-template/-/raw/v1.2.0/ci/php-quality.yml
+  - remote: https://gitlab.com/windy6191/gitlab-workflow-template/-/raw/v1.3.0/ci/base.yml
+  - remote: https://gitlab.com/windy6191/gitlab-workflow-template/-/raw/v1.3.0/ci/php-quality.yml
     inputs:
       php_version: "8.3"
-  - remote: https://gitlab.com/windy6191/gitlab-workflow-template/-/raw/v1.2.0/ci/php-test.yml
+  - remote: https://gitlab.com/windy6191/gitlab-workflow-template/-/raw/v1.3.0/ci/php-test.yml
     inputs:
       php_version: "8.3"
       services:
-        - name: mysql:8.0
-          alias: mysql
-  - remote: https://gitlab.com/windy6191/gitlab-workflow-template/-/raw/v1.2.0/ci/node-build.yml
+        - mysql:8.0
+  - remote: https://gitlab.com/windy6191/gitlab-workflow-template/-/raw/v1.3.0/ci/node-build.yml
 
 # Base de test propre au projet, fusionnée avec le job du template.
 test_phpunit:

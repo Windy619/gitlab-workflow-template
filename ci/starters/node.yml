@@ -1,9 +1,9 @@
 include:
-  - remote: https://gitlab.com/windy6191/gitlab-workflow-template/-/raw/v1.2.0/ci/base.yml
-  - remote: https://gitlab.com/windy6191/gitlab-workflow-template/-/raw/v1.2.0/ci/node-quality.yml
+  - remote: https://gitlab.com/windy6191/gitlab-workflow-template/-/raw/v1.3.0/ci/base.yml
+  - remote: https://gitlab.com/windy6191/gitlab-workflow-template/-/raw/v1.3.0/ci/node-quality.yml
     inputs:
       node_version: "22"
-  - remote: https://gitlab.com/windy6191/gitlab-workflow-template/-/raw/v1.2.0/ci/node-build.yml
+  - remote: https://gitlab.com/windy6191/gitlab-workflow-template/-/raw/v1.3.0/ci/node-build.yml
     inputs:
       node_version: "22"
       artifact_path: dist/

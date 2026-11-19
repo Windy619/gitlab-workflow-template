@@ -74,7 +74,7 @@ Des morceaux de pipeline communs, dans [`ci/`](ci/), que chaque projet inclut au
 |---|---|---|
 | [`base.yml`](ci/base.yml) | aucun : étapes `build` `test` `deploy` `rollback`, déclencheurs, annulation des pipelines dépassés | |
 | [`php-quality.yml`](ci/php-quality.yml) | `test_pint`, `test_phpstan` (si `phpstan.neon` existe), `test_composer_audit` | `php_version` |
-| [`php-test.yml`](ci/php-test.yml) | `test_phpunit`, renommable | `job`, `runner`, `testsuite`, `image`, `php_version`, `php_extensions`, `apt_packages`, `services` |
+| [`php-test.yml`](ci/php-test.yml) | `test_phpunit`, renommable. Avec `DB_CONNECTION` à `mysql` ou `pgsql`, attend jusqu'à 60 s que la base accepte une connexion, puis échoue | `job`, `runner`, `testsuite`, `image`, `php_version`, `php_extensions`, `apt_packages`, `services` |
 | [`node-build.yml`](ci/node-build.yml) | `build_assets` | `node_version`, `build_script`, `artifact_path` |
 | [`node-quality.yml`](ci/node-quality.yml) | `test_lint`, `test_typecheck` (si `tsconfig.json` existe) | `node_version`, `lint_script`, `typecheck_script` |
 | [`python-quality.yml`](ci/python-quality.yml) | `test_ruff`, `test_mypy`, `test_pytest`, avec uv | `python_version`, `uv_version`, `working_dir` |

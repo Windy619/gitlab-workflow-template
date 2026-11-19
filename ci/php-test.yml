@@ -66,9 +66,20 @@ $[[ inputs.job ]]:
       fi
     # Le port d'une base de service s'ouvre avant qu'elle accepte les connexions.
     - |
-      if [ "$DB_CONNECTION" = "mysql" ]; then
-        for i in $(seq 1 30); do
-          php -r 'new PDO("mysql:host=" . getenv("DB_HOST") . ";port=" . (getenv("DB_PORT") ?: "3306"), getenv("DB_USERNAME"), getenv("DB_PASSWORD"));' 2>/dev/null && break
+      case "$DB_CONNECTION" in
+        mysql) db_port="${DB_PORT:-3306}"; DB_DSN="mysql:host=${DB_HOST};port=${db_port}" ;;
+        pgsql) db_port="${DB_PORT:-5432}"; DB_DSN="pgsql:host=${DB_HOST};port=${db_port}${DB_DATABASE:+;dbname=$DB_DATABASE}" ;;
+        *) DB_DSN="" ;;
+      esac
+      if [ -n "$DB_DSN" ]; then
+        export DB_DSN
+        # PHP CLI écrit ses erreurs sur stdout : tout est redirigé pour ne pas noyer le log.
+        deadline=$(( $(date +%s) + 60 ))
+        until php -r 'new PDO(getenv("DB_DSN"), getenv("DB_USERNAME"), getenv("DB_PASSWORD"), [PDO::ATTR_TIMEOUT => 2]);' >/dev/null 2>&1; do
+          if [ "$(date +%s)" -ge "$deadline" ]; then
+            echo "Base $DB_CONNECTION injoignable sur ${DB_HOST}:${db_port} après 60 s : vérifier le service et les variables DB_*." >&2
+            exit 1
+          fi
           sleep 2
         done
       fi
