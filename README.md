@@ -1,6 +1,6 @@
 # GitLab Workflow Template
 
-Base GitLab standardisée à appliquer sur n'importe quel nouveau projet : labels, board Kanban, milestones et templates d'issue et de merge request cohérents entre eux.
+Base GitLab standardisée à appliquer sur n'importe quel nouveau projet : labels, board Kanban, milestones, templates d'issue et de merge request, et templates CI communs, cohérents entre eux.
 
 Le script [`setup_gitlab_template.py`](setup_gitlab_template.py) déploie la configuration via l'API GitLab, sans passer par l'import/export de projet.
 
@@ -65,6 +65,37 @@ Appliquées sur chaque **projet** :
 Le script ne les déploie pas. Copiez-les dans le projet cible, dans `.gitlab/issue_templates/` et `.gitlab/merge_request_templates/`, pour que GitLab les propose.
 
 Ce dépôt applique lui-même ses templates : `.gitlab/` en contient une copie versionnée. Les fichiers de `issue_templates/` et `merge_request_templates/` restent la source, et toute modification s'y fait en même temps que dans `.gitlab/`.
+
+### Templates CI
+
+Des morceaux de pipeline communs, dans [`ci/`](ci/), que chaque projet inclut au lieu de recopier ses jobs. Le dépôt est public : l'inclusion fonctionne depuis gitlab.com comme depuis une autre instance, ce que les composants CI/CD (limités à leur instance) ne permettent pas.
+
+| Template | Jobs | Inputs |
+|---|---|---|
+| [`base.yml`](ci/base.yml) | aucun : étapes `build` `test` `deploy` `rollback`, déclencheurs, annulation des pipelines dépassés | |
+| [`php-quality.yml`](ci/php-quality.yml) | `test_pint`, `test_phpstan` (si `phpstan.neon` existe), `test_composer_audit` | `php_version` |
+| [`php-test.yml`](ci/php-test.yml) | `test_phpunit`, renommable | `job`, `runner`, `testsuite`, `image`, `php_version`, `php_extensions`, `apt_packages`, `services` |
+| [`node-build.yml`](ci/node-build.yml) | `build_assets` | `node_version`, `build_script`, `artifact_path` |
+| [`node-quality.yml`](ci/node-quality.yml) | `test_lint`, `test_typecheck` (si `tsconfig.json` existe) | `node_version`, `lint_script`, `typecheck_script` |
+| [`python-quality.yml`](ci/python-quality.yml) | `test_ruff`, `test_mypy`, `test_pytest`, avec uv | `python_version`, `uv_version`, `working_dir` |
+
+Chaque input a une valeur par défaut, décrite dans l'en-tête `spec` du template.
+
+**Déclencheurs** (`base.yml`) : une branche de travail passe par le pipeline de sa MR, `develop`, `staging` et `main` ont toujours leur pipeline de branche, même quand une MR de batch part d'elles, et un tag `vX.Y.Z` lance le sien. Une branche poussée sans MR n'a pas de pipeline : la MR draft s'ouvre au démarrage du ticket.
+
+**Démarrer un projet** : copier le starter de sa stack en `.gitlab-ci.yml`, puis ajouter les jobs propres au projet (déploiement, tests spécifiques) sous les `include`.
+
+| Stack | Starter |
+|---|---|
+| Laravel | [`ci/starters/laravel.yml`](ci/starters/laravel.yml) |
+| Node.js | [`ci/starters/node.yml`](ci/starters/node.yml) |
+| Python | [`ci/starters/python.yml`](ci/starters/python.yml) |
+
+**Adapter un job** : redéclarer le job dans le `.gitlab-ci.yml` du projet. GitLab fusionne les deux définitions, comme le fait le starter Laravel pour les variables de la base de test. Pour une seconde suite de tests, inclure `php-test.yml` une seconde fois avec un autre `job`.
+
+**Monter de version** : l'URL d'inclusion est épinglée sur un tag (`-/raw/v1.2.0/ci/...`), jamais sur une branche, pour qu'une modification ici ne change pas un pipeline sans que le projet l'ait décidé. Changer le tag dans les URL du projet suffit. Un changement cassant pour les projets (input renommé ou retiré, job renommé) est une version majeure.
+
+Les jobs de déploiement appartiennent encore à chaque projet et doivent poser `interruptible: false` : `base.yml` rend tous les jobs interruptibles par défaut.
 
 ## Prérequis
 
@@ -132,7 +163,7 @@ Le script peut être relancé sans risque :
 
 La stratégie de branches, le versionnement et le format des commits sont décrits dans [CONTRIBUTING.md](CONTRIBUTING.md).
 
-La CI GitLab vérifie le script à chaque push (syntaxe, analyse statique, tests sous Python 3.7 et 3.12). Pour lancer les tests en local :
+La CI GitLab vérifie le script à chaque push (syntaxe, analyse statique, tests sous Python 3.7 et 3.12) et les templates CI (inputs déclarés et utilisés, nommage des jobs, schéma GitLab, starters épinglés sur une même version). Pour lancer les tests en local :
 
 ```bash
 python -m unittest discover -s tests -v

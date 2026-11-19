@@ -1,0 +1,53 @@
+spec:
+  inputs:
+    python_version:
+      description: Version de Python de l'image.
+      default: "3.12"
+      regex: '^3\.[0-9]+$'
+    uv_version:
+      description: Version de uv, figée pour des installations reproductibles.
+      default: "0.12.23"
+    working_dir:
+      description: Dossier qui contient pyproject.toml et uv.lock.
+      default: "."
+---
+.ci_python_quality:
+  image: python:$[[ inputs.python_version ]]-slim
+  stage: test
+  needs: []
+  variables:
+    UV_CACHE_DIR: $CI_PROJECT_DIR/.uv-cache
+    # La version de Python vient de l'image : uv ne doit pas en télécharger une autre.
+    UV_PYTHON_DOWNLOADS: never
+  cache:
+    key:
+      prefix: uv
+      files:
+        - $[[ inputs.working_dir ]]/uv.lock
+    paths:
+      - .uv-cache/
+  before_script:
+    - pip install --quiet --root-user-action=ignore uv==$[[ inputs.uv_version ]]
+    - cd "$[[ inputs.working_dir ]]"
+    - uv sync --frozen
+
+test_ruff:
+  extends: .ci_python_quality
+  script:
+    - uv run ruff check .
+    - uv run ruff format --check .
+
+test_mypy:
+  extends: .ci_python_quality
+  script:
+    - uv run mypy
+
+test_pytest:
+  extends: .ci_python_quality
+  script:
+    - uv run pytest --junitxml=junit.xml
+  artifacts:
+    when: always
+    reports:
+      junit: $[[ inputs.working_dir ]]/junit.xml
+    expire_in: 1 week
