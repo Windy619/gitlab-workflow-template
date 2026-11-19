@@ -1,5 +1,5 @@
 include:
-  - remote: https://gitlab.com/windy6191/gitlab-workflow-template/-/raw/v1.2.0/ci/base.yml
-  - remote: https://gitlab.com/windy6191/gitlab-workflow-template/-/raw/v1.2.0/ci/python-quality.yml
+  - remote: https://gitlab.com/windy6191/gitlab-workflow-template/-/raw/v1.3.0/ci/base.yml
+  - remote: https://gitlab.com/windy6191/gitlab-workflow-template/-/raw/v1.3.0/ci/python-quality.yml
     inputs:
       python_version: "3.12"
