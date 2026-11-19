@@ -17,9 +17,9 @@ workflow:
 
 default:
   interruptible: true
+  # Seules les pannes d'infrastructure se relancent : un job bloqué ou trop long le resterait.
   retry:
     max: 1
     when:
       - runner_system_failure
-      - stuck_or_timeout_failure
       - scheduler_failure
